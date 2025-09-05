@@ -150,7 +150,6 @@ const orderTimerEl = $('#timer');
 const btnReceived = $('#btnReceived');
 
 // --- Funções ---
-// Toast
 function showToast(msg){
   const div=document.createElement('div');
   div.className='toast show';
@@ -159,13 +158,12 @@ function showToast(msg){
   setTimeout(()=> div.remove(),2500);
 }
 
-// Atualiza contagem do carrinho
 function updateCartCount(){
   const totalItems = CART.reduce((sum,c)=>sum+c.qtd,0);
   cartCountEl.textContent = totalItems;
 }
 
-// Carregar produtos
+// --- Carregar produtos ---
 onValue(ref(db,'produtos'), snap=>{
   PRODUCTS=[];
   snap.forEach(ch=>{
@@ -176,7 +174,7 @@ onValue(ref(db,'produtos'), snap=>{
   renderProductList();
 });
 
-// Categoria
+// --- Render categoria ---
 let activeCategory='';
 function renderCategoryFilter(){
   const categorias = Array.from(new Set(PRODUCTS.map(p=>p.categoria).filter(Boolean))).sort();
@@ -194,7 +192,6 @@ function renderCategoryFilter(){
   });
 }
 
-// Lista de produtos
 function renderProductList(){
   const term = searchInput.value.toLowerCase();
   productListEl.innerHTML='';
@@ -205,7 +202,9 @@ function renderProductList(){
   }).forEach(p=>{
     const div=document.createElement('div');
     div.className='product-card relative';
+
     const promoBadge = p.promocional ? `<div class="absolute top-2 left-2 bg-gradient-to-r from-green-400 to-red-500 text-white font-bold text-xs px-2 py-1 rounded shadow-lg">ITEM PROMOCIONAL</div>` : '';
+
     div.innerHTML=`
       ${promoBadge}
       <img src="${p.imagem||''}" alt="${p.nome}"/>
@@ -233,7 +232,7 @@ function renderProductList(){
   });
 }
 
-// Render carrinho
+// --- Render carrinho ---
 function renderCart(){
   cartListEl.innerHTML='';
   let total=0;
@@ -274,15 +273,15 @@ function renderCart(){
   updateCartCount();
 }
 
-// Delivery toggle
+// --- Delivery toggle ---
 deliveryTypeSelect.onchange=()=>{ addressDiv.style.display = deliveryTypeSelect.value==='entrega'?'block':'none'; };
 
-// Abrir/fechar carrinho
+// --- Abrir/fechar carrinho ---
 btnToggleCart.onclick=()=> cartPanel.classList.add('show');
 btnCloseCart.onclick=()=> cartPanel.classList.remove('show');
 document.addEventListener('click', e=>{ if(!cartPanel.contains(e.target)&&!btnToggleCart.contains(e.target)) cartPanel.classList.remove('show'); });
 
-// Finalizar pedido
+// --- Finalizar pedido ---
 btnPlaceOrder.onclick = () => {
   if (CART.length === 0) return showToast('Adicione pelo menos um produto ao carrinho!');
   if (!customerName.value || !customerWhats.value) return showToast('Preencha nome e WhatsApp!');
@@ -297,8 +296,8 @@ btnPlaceOrder.onclick = () => {
 
   const total = parseFloat(CART.reduce((sum, c) => sum + c.preco * c.qtd, 0)) + (deliveryTypeSelect.value === 'entrega' ? 10 : 0);
 
-  // Número aleatório de 9 dígitos
-  const numeroPedido = Math.floor(100000000 + Math.random() * 900000000);
+  // --- Número do pedido aleatório 9 dígitos ---
+  const numeroPedido = Math.floor(Math.random()*900000000) + 100000000;
 
   const order = {
     numero: numeroPedido,
@@ -314,52 +313,56 @@ btnPlaceOrder.onclick = () => {
     createdAt: new Date().toISOString()
   };
 
-  const newOrderRef = push(ref(db, 'pedidos'), order);
-  order.firebaseKey = newOrderRef.key;
+  push(ref(db, 'pedidos'), order)
+    .then((res) => {
+      order.firebaseKey = res.key; // salva a chave para futuras atualizações
+      showToast('Pedido registrado com sucesso!');
 
-  newOrderRef.then(()=>{
-    showToast('Pedido registrado com sucesso!');
+      LAST_ORDERS.unshift(order);
+      if (LAST_ORDERS.length > 5) LAST_ORDERS.pop();
+      localStorage.setItem('lastOrders', JSON.stringify(LAST_ORDERS));
 
-    LAST_ORDERS.unshift(order);
-    if (LAST_ORDERS.length > 5) LAST_ORDERS.pop();
-    localStorage.setItem('lastOrders', JSON.stringify(LAST_ORDERS));
+      ORDER_COMPLETE = order;
+      ORDER_START_TIME = Date.now();
+      localStorage.setItem('orderComplete', JSON.stringify(ORDER_COMPLETE));
+      localStorage.setItem('orderStartTime', ORDER_START_TIME);
 
-    ORDER_COMPLETE = order;
-    ORDER_START_TIME = Date.now();
-    localStorage.setItem('orderComplete', JSON.stringify(ORDER_COMPLETE));
-    localStorage.setItem('orderStartTime', ORDER_START_TIME);
+      localStorage.removeItem('cart');
+      CART = [];
+      renderCart();
+      renderLastOrders();
 
-    localStorage.removeItem('cart');
-    CART = [];
-    renderCart();
-    renderLastOrders();
-
-    showOrderComplete();
-  }).catch(err => {
-    showToast('Erro ao registrar pedido!');
-    console.error(err);
-  });
+      showOrderComplete();
+    })
+    .catch(err => {
+      showToast('Erro ao registrar pedido!');
+      console.error(err);
+    });
 };
 
-// Últimos pedidos
+// --- Últimos pedidos ---
 function renderLastOrders(){
   lastOrdersEl.innerHTML='';
   LAST_ORDERS.forEach(o=>{
-    const div = document.createElement('div');
+    const div=document.createElement('div');
     div.className='bg-gray-800 p-2 rounded mb-2';
-    div.innerHTML=`<div class="font-bold">${o.numero} - ${o.cliente} (${o.status})</div>
-                   <div>${o.itens.map(i=>i.nome+' x'+i.qtd).join(', ')}</div>
-                   <div class="text-yellow-400 font-bold">${brl(o.total)}</div>`;
+    div.innerHTML=`
+      <div class="flex justify-between">
+        <div class="font-bold">${o.cliente}</div>
+        <div>${brl(o.total)}</div>
+      </div>
+      <div class="text-xs text-gray-400">${o.status}</div>
+    `;
     lastOrdersEl.appendChild(div);
   });
 }
-renderLastOrders();
 
-// Tela pedido concluído
+// --- Tela pedido concluído ---
 function showOrderComplete(){
   orderCompleteEl.classList.remove('hidden');
   updateOrderTimer();
 }
+
 function updateOrderTimer(){
   if(!ORDER_START_TIME) return;
   const diff = Date.now() - ORDER_START_TIME;
@@ -370,15 +373,12 @@ function updateOrderTimer(){
   setTimeout(updateOrderTimer,1000);
 }
 
-// Contato loja
-contactStoreBtn.onclick=()=>{
-  window.open(`https://wa.me/55${ORDER_COMPLETE.telefone}?text=Olá!`, '_blank');
-};
+// --- Contato loja ---
+contactStoreBtn.onclick=()=>{ window.open(`https://wa.me/55${ORDER_COMPLETE.telefone}?text=Olá!`, '_blank'); };
 
-// --- NOVA FUNÇÃO: Confirmar recebimento do pedido e atualizar status ---
+// --- Confirmar recebimento e atualizar status ---
 btnReceived.addEventListener('click', () => {
   if (!ORDER_COMPLETE || !ORDER_COMPLETE.firebaseKey) return;
-
   const pedidoRef = ref(db, 'pedidos/' + ORDER_COMPLETE.firebaseKey);
   update(pedidoRef, { status: 'Finalizado' })
     .then(() => {
@@ -392,6 +392,7 @@ btnReceived.addEventListener('click', () => {
         renderLastOrders();
       }
 
+      // Somente aqui a tela some
       ORDER_COMPLETE = null;
       ORDER_START_TIME = null;
       localStorage.removeItem('orderComplete');
@@ -405,6 +406,11 @@ btnReceived.addEventListener('click', () => {
       showToast('Erro ao atualizar status!');
     });
 });
+
+// --- Inicialização ---
+renderCart();
+renderLastOrders();
+if(ORDER_COMPLETE) showOrderComplete();
 </script>
 </body>
 </html>
