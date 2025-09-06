@@ -175,6 +175,18 @@ font-weight: bold; box-shadow: 0 0 10px #FFD700aa; z-index: 9999; cursor: pointe
   <p class="mb-4">Já estamos preparando seu pedido. Quando ele sair para entrega, avisaremos no WhatsApp informado.</p>
   <button id="contactStore" class="bg-yellow-400 text-black px-4 py-2 rounded font-semibold btn mb-4">Entrar em contato com a loja</button>
   <div id="orderTimer" class="bg-gray-800 p-3 rounded">Tempo desde o pedido: <span id="timer">00:00:00</span></div>
+  <!-- TIMELINE DO PEDIDO (COLE AQUI DENTRO DO orderComplete) -->
+<div id="orderTimeline" class="w-full max-w-md my-4 mx-auto hidden">
+  <div class="flex justify-between items-center text-sm font-semibold text-gray-300">
+    <div id="stepPreparando">Preparando</div>
+    <div id="stepEntregaRetirada">...</div>
+    <div id="stepFinalizado">Finalizado</div>
+  </div>
+  <div class="relative h-2 bg-gray-600 rounded mt-1">
+    <div id="progressBar" class="absolute h-2 bg-yellow-400 rounded w-0" style="transition: width 500ms ease;"></div>
+  </div>
+</div>
+
   <button id="btnReceived" class="mt-4 bg-green-600 text-white px-4 py-2 rounded btn">Recebi meu pedido</button>
 </div>
 
@@ -182,8 +194,9 @@ font-weight: bold; box-shadow: 0 0 10px #FFD700aa; z-index: 9999; cursor: pointe
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-app.js";
-import { getDatabase, ref, onValue, push, update } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-database.js";
+import { getDatabase, ref, onValue, push, update, get, child, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/10.5.2/firebase-database.js";
 
+// --- Configuração Firebase ---
 const firebaseConfig = {
   apiKey: "AIzaSyBzK6HfalJpnGaGFZptwJUfIkpugvevHNs",
   authDomain: "delivery-demo-54f9c.firebaseapp.com",
@@ -196,14 +209,32 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
+// --- Utils ---
 const $ = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const brl = v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 
-let PRODUCTS = [], CART = JSON.parse(localStorage.getItem('cart')) || [], LAST_ORDERS = JSON.parse(localStorage.getItem('lastOrders')) || [];
+// --- Áudios ---
+const audioEntrega = new Audio('https://dl.dropbox.com/scl/fi/8ht99jq95fvg8meyvf6ud/SAIU-PARA-ENTREGA-FOOD.mp3?dl=1');
+const audioRetirada = new Audio('https://dl.dropbox.com/scl/fi/0v5wnfiymzspq495dzwzh/SEU-PEDIDO-ESTA-PRONTO.mp3?dl=1');
+audioEntrega.preload = 'auto';
+audioRetirada.preload = 'auto';
+
+// desbloquear autoplay
+document.addEventListener('click', function unlockAudioOnce() {
+  audioEntrega.play().then(()=>audioEntrega.pause()).catch(()=>{});
+  audioRetirada.play().then(()=>audioRetirada.pause()).catch(()=>{});
+  document.removeEventListener('click', unlockAudioOnce);
+});
+
+// --- Estado ---
+let PRODUCTS = [];
+let CART = JSON.parse(localStorage.getItem('cart')) || [];
+let LAST_ORDERS = JSON.parse(localStorage.getItem('lastOrders')) || [];
 let ORDER_COMPLETE = JSON.parse(localStorage.getItem('orderComplete')) || null;
 let ORDER_START_TIME = localStorage.getItem('orderStartTime') || null;
 
+// --- DOM refs ---
 const productListEl = $('#productList');
 const cartListEl = $('#cartList');
 const totalPriceEl = $('#totalPrice');
@@ -224,14 +255,16 @@ const pixWhatsBtn = $('#pixWhatsBtn');
 const categoryFilterEl = $('#categoryFilter');
 const toastContainer = $('#toastContainer');
 const cartCountEl = $('#cartCount');
-
 const orderCompleteEl = $('#orderComplete');
 const contactStoreBtn = $('#contactStore');
 const orderTimerEl = $('#timer');
 const btnReceived = $('#btnReceived');
-
 const saveDataCheckbox = $('#saveCustomerData');
 
+// timeline elements seguros
+function $safe(id){ return document.getElementById(id); }
+
+// --- Dados do cliente ---
 function loadCustomerData() {
   const saved = JSON.parse(localStorage.getItem('customerData')) || {};
   if(saved.name) customerName.value = saved.name;
@@ -241,28 +274,23 @@ function loadCustomerData() {
 }
 
 function saveCustomerData() {
-  if(saveDataCheckbox.checked) {
-    const data = {
+  if(saveDataCheckbox.checked){
+    localStorage.setItem('customerData', JSON.stringify({
       name: customerName.value,
       whats: customerWhats.value,
       address: addressInput.value
-    };
-    localStorage.setItem('customerData', JSON.stringify(data));
-  } else {
-    localStorage.removeItem('customerData');
-  }
+    }));
+  } else localStorage.removeItem('customerData');
 }
 
-// Carrega os dados ao abrir o carrinho
+// evento de carregamento e salvamento
 btnToggleCart.addEventListener('click', loadCustomerData);
-
-// Salva os dados automaticamente quando alterados ou quando marcar/desmarcar a caixinha
 customerName.addEventListener('input', saveCustomerData);
 customerWhats.addEventListener('input', saveCustomerData);
 addressInput.addEventListener('input', saveCustomerData);
 saveDataCheckbox.addEventListener('change', saveCustomerData);
 
-// --- Funções ---
+// --- Toast ---
 function showToast(msg){
   const div=document.createElement('div');
   div.className='toast show';
@@ -276,7 +304,7 @@ function updateCartCount(){
   cartCountEl.textContent = totalItems;
 }
 
-// --- Carregar produtos ---
+/* ----------------- PRODUTOS ----------------- */
 onValue(ref(db,'produtos'), snap=>{
   PRODUCTS=[];
   snap.forEach(ch=>{
@@ -287,7 +315,6 @@ onValue(ref(db,'produtos'), snap=>{
   renderProductList();
 });
 
-// --- Render categoria ---
 let activeCategory='';
 function renderCategoryFilter(){
   const categorias = Array.from(new Set(PRODUCTS.map(p=>p.categoria).filter(Boolean))).sort();
@@ -306,7 +333,7 @@ function renderCategoryFilter(){
 }
 
 function renderProductList(){
-  const term = searchInput.value.toLowerCase();
+  const term = (searchInput.value||'').toLowerCase();
   productListEl.innerHTML='';
   PRODUCTS.filter(p=>{
     const textMatch=`${p.nome} ${p.descricao} ${p.categoria||''}`.toLowerCase().includes(term);
@@ -315,9 +342,7 @@ function renderProductList(){
   }).forEach(p=>{
     const div=document.createElement('div');
     div.className='product-card relative';
-
     const promoBadge = p.promocional ? `<div class="absolute top-2 left-2 bg-gradient-to-r from-green-400 to-red-500 text-white font-bold text-xs px-2 py-1 rounded shadow-lg">ITEM PROMOCIONAL</div>` : '';
-
     div.innerHTML=`
       ${promoBadge}
       <img src="${p.imagem||''}" alt="${p.nome}"/>
@@ -332,12 +357,11 @@ function renderProductList(){
       <button class="bg-yellow-400 text-black px-3 py-1 rounded mt-2 btn addBtn">Adicionar</button>
     `;
     productListEl.appendChild(div);
-
     const qtyInput = div.querySelector('.qtyInput');
     div.querySelector('.addBtn').onclick=()=>{
       const qty = parseInt(qtyInput.value)||1;
       const idx = CART.findIndex(c=>c.id===p.id);
-      if(idx>-1){ CART[idx].qtd += qty; } else { CART.push({id:p.id,nome:p.nome,preco:p.preco,qtd:qty}); }
+      if(idx>-1) CART[idx].qtd += qty; else CART.push({id:p.id,nome:p.nome,preco:p.preco,qtd:qty});
       localStorage.setItem('cart',JSON.stringify(CART));
       renderCart();
       showToast(`${p.nome} adicionado ao carrinho!`);
@@ -345,7 +369,7 @@ function renderProductList(){
   });
 }
 
-// --- Render carrinho ---
+/* ----------------- CARRINHO ----------------- */
 function renderCart(){
   cartListEl.innerHTML='';
   let total=0;
@@ -364,16 +388,13 @@ function renderCart(){
       </div>
     `;
     cartListEl.appendChild(div);
-
     const qtyCart = div.querySelector('.qtyCart');
     qtyCart.onchange=()=>{
-      const val = parseInt(qtyCart.value)||1;
-      CART[i].qtd = val;
+      CART[i].qtd = parseInt(qtyCart.value)||1;
       localStorage.setItem('cart',JSON.stringify(CART));
       renderCart();
       showToast(`Quantidade de ${c.nome} atualizada!`);
     };
-
     div.querySelector('.removeBtn').onclick=()=>{
       CART.splice(i,1);
       localStorage.setItem('cart',JSON.stringify(CART));
@@ -386,15 +407,13 @@ function renderCart(){
   updateCartCount();
 }
 
-// --- Delivery toggle ---
-deliveryTypeSelect.onchange=()=>{ addressDiv.style.display = deliveryTypeSelect.value==='entrega'?'block':'none'; };
-
-// --- Abrir/fechar carrinho ---
-btnToggleCart.onclick=()=> cartPanel.classList.add('show');
-btnCloseCart.onclick=()=> cartPanel.classList.remove('show');
+/* ----------------- UI COMPORTAMENTOS ----------------- */
+deliveryTypeSelect.onchange = () => { addressDiv.style.display = deliveryTypeSelect.value==='entrega'?'block':'none'; };
+btnToggleCart.onclick = ()=> cartPanel.classList.add('show');
+btnCloseCart.onclick = ()=> cartPanel.classList.remove('show');
 document.addEventListener('click', e=>{ if(!cartPanel.contains(e.target)&&!btnToggleCart.contains(e.target)) cartPanel.classList.remove('show'); });
 
-// --- Finalizar pedido ---
+/* ----------------- FINALIZAR PEDIDO ----------------- */
 btnPlaceOrder.onclick = () => {
   if (CART.length === 0) return showToast('Adicione pelo menos um produto ao carrinho!');
   if (!customerName.value || !customerWhats.value) return showToast('Preencha nome e WhatsApp!');
@@ -407,54 +426,51 @@ btnPlaceOrder.onclick = () => {
     troco = `Troco para: ${Number(trocoInput).toLocaleString('pt-BR', {style:'currency', currency:'BRL'})}`;
   }
 
-  const total = parseFloat(CART.reduce((sum, c) => sum + c.preco * c.qtd, 0)) + (deliveryTypeSelect.value === 'entrega' ? 10 : 0);
-
-  // --- Número do pedido aleatório 9 dígitos ---
+  const total = CART.reduce((sum,c)=>sum+c.preco*c.qtd,0) + (deliveryTypeSelect.value==='entrega'?10:0);
   const numeroPedido = Math.floor(Math.random()*900000000) + 100000000;
-
   const order = {
     numero: numeroPedido,
     cliente: customerName.value,
     telefone: customerWhats.value,
     delivery: deliveryTypeSelect.value,
     address: addressInput.value,
-    observacao: customerObs.value || "",
+    observacao: (document.getElementById('customerObs')?.value||""),
     payment: paymentMethod.value,
     troco: troco,
     total,
-    itens: CART.map(c => ({ ...c })),
-    status: 'Preparando',
+    itens: CART.map(c=>({...c})),
+    status:'Preparando',
     createdAt: new Date().toISOString()
   };
 
-  push(ref(db, 'pedidos'), order)
-    .then((res) => {
-      order.firebaseKey = res.key; // salva a chave para futuras atualizações
+  push(ref(db,'pedidos'),order)
+    .then(res=>{
+      order.firebaseKey = res.key;
+      ORDER_COMPLETE = order;
+      ORDER_START_TIME = Date.now();
+      localStorage.setItem('orderComplete',JSON.stringify(ORDER_COMPLETE));
+      localStorage.setItem('orderStartTime',ORDER_START_TIME);
+
       showToast('Pedido registrado com sucesso!');
 
       LAST_ORDERS.unshift(order);
-      if (LAST_ORDERS.length > 5) LAST_ORDERS.pop();
-      localStorage.setItem('lastOrders', JSON.stringify(LAST_ORDERS));
+      if(LAST_ORDERS.length>5) LAST_ORDERS.pop();
+      localStorage.setItem('lastOrders',JSON.stringify(LAST_ORDERS));
 
-      ORDER_COMPLETE = order;
-      ORDER_START_TIME = Date.now();
-      localStorage.setItem('orderComplete', JSON.stringify(ORDER_COMPLETE));
-      localStorage.setItem('orderStartTime', ORDER_START_TIME);
-
-      localStorage.removeItem('cart');
       CART = [];
+      localStorage.removeItem('cart');
       renderCart();
       renderLastOrders();
-
       showOrderComplete();
+      monitorStatus(ORDER_COMPLETE);
     })
-    .catch(err => {
-      showToast('Erro ao registrar pedido!');
+    .catch(err=>{
       console.error(err);
+      showToast('Erro ao registrar pedido!');
     });
 };
 
-// --- Últimos pedidos ---
+/* ----------------- ÚLTIMOS PEDIDOS ----------------- */
 function renderLastOrders(){
   lastOrdersEl.innerHTML='';
   LAST_ORDERS.forEach(o=>{
@@ -471,69 +487,200 @@ function renderLastOrders(){
   });
 }
 
-// --- Tela pedido concluído ---
+/* ----------------- TELA PEDIDO CONCLUÍDO E TIMER ----------------- */
 function showOrderComplete(){
+  if(!ORDER_COMPLETE) return;
   orderCompleteEl.classList.remove('hidden');
   updateOrderTimer();
+  monitorStatus(ORDER_COMPLETE);
 }
 
 function updateOrderTimer(){
   if(!ORDER_START_TIME) return;
   const diff = Date.now() - ORDER_START_TIME;
-  const h = Math.floor(diff/3600000).toString().padStart(2,'0');
-  const m = Math.floor(diff/60000)%60 .toString().padStart(2,'0');
-  const s = Math.floor(diff/1000)%60 .toString().padStart(2,'0');
+  const h = String(Math.floor(diff/3600000)).padStart(2,'0');
+  const m = String(Math.floor(diff/60000)%60).padStart(2,'0');
+  const s = String(Math.floor(diff/1000)%60).padStart(2,'0');
   orderTimerEl.textContent = `${h}:${m}:${s}`;
   setTimeout(updateOrderTimer,1000);
 }
 
-// --- Contato loja ---
-contactStoreBtn.onclick=()=>{ window.open(`https://wa.me/55${ORDER_COMPLETE.telefone}?text=Olá!`, '_blank'); };
+/* ----------------- CONTATO E RECEBIMENTO ----------------- */
+contactStoreBtn.onclick = ()=>{ if(!ORDER_COMPLETE) return; window.open(`https://wa.me/55${ORDER_COMPLETE.telefone}?text=Olá!`, '_blank'); };
 
-// --- Confirmar recebimento e atualizar status ---
-btnReceived.addEventListener('click', () => {
-  if (!ORDER_COMPLETE || !ORDER_COMPLETE.firebaseKey) return;
-  const pedidoRef = ref(db, 'pedidos/' + ORDER_COMPLETE.firebaseKey);
-  update(pedidoRef, { status: 'Finalizado' })
-    .then(() => {
-      ORDER_COMPLETE.status = 'Finalizado';
-      localStorage.setItem('orderComplete', JSON.stringify(ORDER_COMPLETE));
-
+btnReceived.onclick = ()=>{
+  if(!ORDER_COMPLETE?.firebaseKey) return;
+  const pedidoRef = ref(db,'pedidos/'+ORDER_COMPLETE.firebaseKey);
+  update(pedidoRef,{status:'Finalizado'})
+    .then(()=>{
+      ORDER_COMPLETE.status='Finalizado';
+      localStorage.setItem('orderComplete',JSON.stringify(ORDER_COMPLETE));
       const idx = LAST_ORDERS.findIndex(o=>o.numero===ORDER_COMPLETE.numero);
-      if(idx>-1){
-        LAST_ORDERS[idx].status = 'Finalizado';
-        localStorage.setItem('lastOrders', JSON.stringify(LAST_ORDERS));
-        renderLastOrders();
-      }
-
-      // Somente aqui a tela some
-      ORDER_COMPLETE = null;
-      ORDER_START_TIME = null;
+      if(idx>-1){ LAST_ORDERS[idx].status='Finalizado'; localStorage.setItem('lastOrders',JSON.stringify(LAST_ORDERS)); renderLastOrders(); }
+      ORDER_COMPLETE=null;
+      ORDER_START_TIME=null;
       localStorage.removeItem('orderComplete');
       localStorage.removeItem('orderStartTime');
       orderCompleteEl.classList.add('hidden');
-
-      showToast(`Pedido finalizado com sucesso!`);
+      showToast('Pedido finalizado com sucesso!');
     })
-    .catch(err=>{
-      console.error(err);
-      showToast('Erro ao atualizar status!');
-    });
-});
+    .catch(err=>{ console.error(err); showToast('Erro ao atualizar status!'); });
+};
 
-// --- Inicialização ---
+/* ----------------- MONITORAMENTO EM TEMPO REAL ----------------- */
+function normalizeStatus(s){ return s? String(s).trim().toLowerCase() : ''; }
+
+// variável global para guardar progresso máximo por pedido
+const orderMaxProgress = {}; // { orderKey: 0..100 }
+
+function updateTimelineUI(status, deliveryType, firstLoad=false){
+  const timelineEl = $safe('orderTimeline');
+  const stepPreparando = $safe('stepPreparando');
+  const stepEntregaRetirada = $safe('stepEntregaRetirada');
+  const stepFinalizado = $safe('stepFinalizado');
+  const progressBar = $safe('progressBar');
+  if(!timelineEl||!stepPreparando||!stepEntregaRetirada||!stepFinalizado||!progressBar) return;
+
+  const s = normalizeStatus(status);
+  const orderKey = currentOrderKey();
+
+  // função auxiliar para formatar hora
+  function formatHoraAgora(){
+    const now = new Date();
+    return `Hoje às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  // função auxiliar para mostrar o texto abaixo do passo
+  function setStepTime(stepEl){
+    if(!stepEl) return;
+    let info = stepEl.querySelector('.step-time');
+    if(!info){
+      info = document.createElement('div');
+      info.className = 'step-time';
+      info.style.fontSize = '12px';
+      info.style.color = '#666';
+      stepEl.appendChild(info);
+    }
+    info.textContent = formatHoraAgora();
+  }
+
+  // função auxiliar para atualizar barra garantindo progresso crescente
+  function setProgress(widthPercent){
+    const maxSoFar = orderMaxProgress[orderKey] || 0;
+    if(widthPercent > maxSoFar){
+      progressBar.style.width = widthPercent + '%';
+      orderMaxProgress[orderKey] = widthPercent;
+    }
+  }
+
+  timelineEl.classList.remove('hidden');
+
+  // --- ENTREGA ---
+  if(deliveryType==='entrega'){
+    stepPreparando.textContent='Preparando';
+    stepEntregaRetirada.textContent='Saiu para entrega';
+    stepFinalizado.textContent='Concluído';
+    stepFinalizado.classList.remove('hidden');
+
+    if(s==='preparando'){
+      setProgress(33);
+      setStepTime(stepPreparando);
+    } else if(['saiu para entrega','saiu-para-entrega','saiu_para_entrega'].includes(s)){
+      setProgress(66);
+      if(!firstLoad) playAudioIfNeeded(orderKey,'entrega');
+      setStepTime(stepEntregaRetirada);
+    } else if(s==='finalizado'){
+      setProgress(100);
+      setStepTime(stepFinalizado);
+      timelineEl.classList.add('hidden'); // fecha tela
+    }
+  }
+
+  // --- RETIRADA ---
+  else if(deliveryType==='retirada'){
+    stepPreparando.textContent='Preparando';
+    stepEntregaRetirada.textContent='Aguardando Retirada';
+    stepFinalizado.classList.add('hidden'); // não mostra "Concluído"
+
+    if(s==='preparando'){
+      setProgress(33);
+      setStepTime(stepPreparando);
+    } else if(s==='finalizado'){
+      setProgress(100);
+      if(!firstLoad) playAudioIfNeeded(orderKey,'retirada');
+      setStepTime(stepEntregaRetirada);
+    } else {
+      setProgress(66);
+      if(!firstLoad) playAudioIfNeeded(orderKey,'retirada');
+      setStepTime(stepEntregaRetirada);
+    }
+  }
+}
+
+
+function currentOrderKey(){ return ORDER_COMPLETE?.firebaseKey || ORDER_COMPLETE?.key || null; }
+
+function monitorStatus(order){
+  if(!order) return;
+
+  if(!order.firebaseKey){
+    const pedidosRef = ref(db,'pedidos');
+    const q = query(pedidosRef, orderByChild('numero'), equalTo(order.numero));
+    get(q).then(snap=>{
+      if(snap.exists()){
+        snap.forEach(ch=>{ order.firebaseKey=ch.key; ORDER_COMPLETE.firebaseKey=ch.key; localStorage.setItem('orderComplete',JSON.stringify(ORDER_COMPLETE)); });
+        monitorStatus(order);
+      } else console.warn('Não encontrou firebaseKey para pedido local',order.numero);
+    }).catch(err=>{ console.error('Erro ao procurar firebaseKey',err); });
+    return;
+  }
+
+  const orderRef = ref(db,'pedidos/'+order.firebaseKey);
+  updateTimelineUI(order.status,order.delivery,true);
+  localStorage.setItem('orderStatus_'+order.firebaseKey,normalizeStatus(order.status||''));
+
+  onValue(orderRef, snap=>{
+    const data = snap.val();
+    if(!data) return;
+    const newStatus = normalizeStatus(data.status||'');
+    const prevStatus = localStorage.getItem('orderStatus_'+order.firebaseKey)||'';
+    updateTimelineUI(data.status,data.delivery,false);
+
+    if(newStatus!==prevStatus){
+      if(data.delivery==='entrega' && ['saiu para entrega','saiu-para-entrega','saiu_para_entrega'].includes(newStatus)) playAudioIfNeeded(order.firebaseKey,'entrega');
+      if(data.delivery==='retirada' && newStatus==='finalizado') playAudioIfNeeded(order.firebaseKey,'retirada');
+      localStorage.setItem('orderStatus_'+order.firebaseKey,newStatus);
+    }
+
+    if(newStatus==='finalizado'){
+      localStorage.removeItem('orderComplete');
+      localStorage.removeItem('orderStartTime');
+      localStorage.removeItem('orderStatus_'+order.firebaseKey);
+      localStorage.removeItem('cart');
+      ORDER_COMPLETE=null;
+      ORDER_START_TIME=null;
+      const timelineEl=$safe('orderTimeline');
+      if(timelineEl) timelineEl.classList.add('hidden');
+      orderCompleteEl.classList.add('hidden');
+    }
+  });
+}
+
+/* ----------------- INICIALIZAÇÃO ----------------- */
 renderCart();
 renderLastOrders();
-if(ORDER_COMPLETE) showOrderComplete();
+if(ORDER_COMPLETE){ showOrderComplete(); monitorStatus(ORDER_COMPLETE); }
 
-// --- Splash Screen ---
-window.addEventListener('load', () => {
-  setTimeout(() => {
-    document.getElementById('splash').style.display = 'none';
-  }, 3000); // 3 segundos
+window.addEventListener('load', ()=>{
+  setTimeout(()=>{
+    const s=document.getElementById('splash');
+    if(s) s.style.display='none';
+  },3000);
 });
-
 </script>
+
+
+
 <script>
   let deferredPrompt;
   const installPrompt = document.getElementById('installPrompt');
