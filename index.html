@@ -116,6 +116,13 @@ font-weight: bold; box-shadow: 0 0 10px #FFD700aa; z-index: 9999; cursor: pointe
     <h2 class="text-xl font-bold mb-2">🛒 Carrinho</h2>
     <div id="cartList" class="mb-4"></div>
     <div class="mb-4">
+  <label class="inline-flex items-center gap-2">
+    <input type="checkbox" id="saveCustomerData" class="rounded bg-gray-700 border-gray-600"/>
+    <span>Salvar meus dados para próximos pedidos</span>
+  </label>
+</div>
+
+    <div class="mb-4">
       <label class="block mb-1">Nome</label>
       <input id="customerName" class="w-full p-2 rounded bg-gray-700 border border-gray-600"/>
       <label class="block mt-2 mb-1">WhatsApp</label>
@@ -132,6 +139,7 @@ font-weight: bold; box-shadow: 0 0 10px #FFD700aa; z-index: 9999; cursor: pointe
       <label class="block mb-1">Endereço</label>
       <input id="address" class="w-full p-2 rounded bg-gray-700 border border-gray-600"/>
     </div>
+
     <div class="mb-4">
   <label class="block mb-1">Observação do Cliente</label>
   <textarea id="customerObs" rows="2" class="w-full p-2 rounded bg-gray-700 border border-gray-600"></textarea>
@@ -221,6 +229,38 @@ const orderCompleteEl = $('#orderComplete');
 const contactStoreBtn = $('#contactStore');
 const orderTimerEl = $('#timer');
 const btnReceived = $('#btnReceived');
+
+const saveDataCheckbox = $('#saveCustomerData');
+
+function loadCustomerData() {
+  const saved = JSON.parse(localStorage.getItem('customerData')) || {};
+  if(saved.name) customerName.value = saved.name;
+  if(saved.whats) customerWhats.value = saved.whats;
+  if(saved.address) addressInput.value = saved.address;
+  saveDataCheckbox.checked = !!saved.name || !!saved.whats || !!saved.address;
+}
+
+function saveCustomerData() {
+  if(saveDataCheckbox.checked) {
+    const data = {
+      name: customerName.value,
+      whats: customerWhats.value,
+      address: addressInput.value
+    };
+    localStorage.setItem('customerData', JSON.stringify(data));
+  } else {
+    localStorage.removeItem('customerData');
+  }
+}
+
+// Carrega os dados ao abrir o carrinho
+btnToggleCart.addEventListener('click', loadCustomerData);
+
+// Salva os dados automaticamente quando alterados ou quando marcar/desmarcar a caixinha
+customerName.addEventListener('input', saveCustomerData);
+customerWhats.addEventListener('input', saveCustomerData);
+addressInput.addEventListener('input', saveCustomerData);
+saveDataCheckbox.addEventListener('change', saveCustomerData);
 
 // --- Funções ---
 function showToast(msg){
@@ -525,6 +565,7 @@ window.addEventListener('load', () => {
     console.log('App instalado');
     installPrompt.style.display = 'none';
   });
+  
 </script>
 </body>
 </html>
