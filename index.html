@@ -133,6 +133,10 @@ font-weight: bold; box-shadow: 0 0 10px #FFD700aa; z-index: 9999; cursor: pointe
       <input id="address" class="w-full p-2 rounded bg-gray-700 border border-gray-600"/>
     </div>
     <div class="mb-4">
+  <label class="block mb-1">Observação do Cliente</label>
+  <textarea id="customerObs" rows="2" class="w-full p-2 rounded bg-gray-700 border border-gray-600"></textarea>
+</div>
+    <div class="mb-4">
       <label class="block mb-1">Forma de pagamento</label>
       <select id="paymentMethod" class="w-full p-2 rounded bg-gray-700 border border-gray-600">
         <option value="pix">Pix</option>
@@ -374,6 +378,7 @@ btnPlaceOrder.onclick = () => {
     telefone: customerWhats.value,
     delivery: deliveryTypeSelect.value,
     address: addressInput.value,
+    observacao: customerObs.value || "",
     payment: paymentMethod.value,
     troco: troco,
     total,
